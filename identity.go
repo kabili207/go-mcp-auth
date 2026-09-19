@@ -70,9 +70,8 @@ type TokenValidator interface {
 }
 
 // Middleware requires a bearer token accepted by one of the validators, tried
-// in order. Put Server before an OIDCValidator: the validator falls back to the
-// provider's userinfo endpoint for tokens it cannot verify, which would cost a
-// network round trip on every request carrying a server-issued token.
+// in order. Put Server before an OIDCValidator, so that its own tokens are
+// settled locally.
 //
 // resourceMetadataURL goes in the WWW-Authenticate header of a 401 (RFC 9728),
 // which is how an MCP client finds the authorization server. See

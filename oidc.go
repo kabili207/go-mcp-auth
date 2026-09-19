@@ -52,6 +52,10 @@ type Discovery struct {
 const (
 	idpTimeout = 10 * time.Second
 	jwksTTL    = time.Hour
+	// jwksMissInterval limits refetches caused by an unknown key ID. Anyone can send
+	// a token with a made-up kid, and each one would otherwise cost a request to the
+	// provider.
+	jwksMissInterval = time.Minute
 )
 
 // Only asymmetric algorithms: the key comes from the provider's JWKS.
@@ -89,15 +93,22 @@ func discover(ctx context.Context, client *http.Client, cfg OIDCConfig) (Discove
 
 // OIDCValidator accepts tokens issued directly by the identity provider: JWTs
 // checked against its JWKS, and opaque tokens checked at its userinfo endpoint.
+//
+// The userinfo endpoint says who a token belongs to, not which client it was
+// issued for, and most providers answer for any client's token. So it is only
+// asked about tokens that are not JWTs. A JWT that fails validation is refused:
+// falling back would let a token minted for another application skip the
+// audience check.
 type OIDCValidator struct {
 	config     OIDCConfig
 	users      UserResolver
 	httpClient *http.Client
 	discovery  Discovery
 
-	jwksMu   sync.RWMutex
-	jwks     []jsonWebKey
-	jwksTime time.Time
+	jwksMu       sync.RWMutex
+	jwks         []jsonWebKey
+	jwksTime     time.Time
+	jwksMissTime time.Time // last refetch caused by an unknown key ID
 }
 
 // NewOIDCValidator performs discovery, so it fails if the provider is unreachable.
@@ -118,9 +129,7 @@ func (v *OIDCValidator) Discovery() Discovery { return v.discovery }
 // ValidateToken implements TokenValidator.
 func (v *OIDCValidator) ValidateToken(ctx context.Context, token string) *Identity {
 	if strings.Count(token, ".") == 2 {
-		if id := v.validateJWT(ctx, token); id != nil {
-			return id
-		}
+		return v.validateJWT(ctx, token)
 	}
 	return v.validateViaUserinfo(ctx, token)
 }
@@ -226,15 +235,19 @@ func (v *OIDCValidator) signingKey(ctx context.Context, kid string) (any, error)
 	v.jwksMu.RLock()
 	fresh := v.jwks != nil && time.Since(v.jwksTime) < jwksTTL
 	key := findKey(v.jwks, kid)
+	missAllowed := time.Since(v.jwksMissTime) >= jwksMissInterval
 	v.jwksMu.RUnlock()
 
 	if fresh && key != nil {
 		return key.publicKey()
 	}
+	// A fresh cache without the key may mean the provider rotated since the last
+	// fetch, so look again, but not for every unknown kid a caller sends.
+	if fresh && !missAllowed {
+		return nil, fmt.Errorf("key not found: %s", kid)
+	}
 
-	// Also reached when the cache is fresh but lacks the key: the provider may
-	// have rotated since the last fetch.
-	if err := v.refreshJWKS(ctx); err != nil {
+	if err := v.refreshJWKS(ctx, fresh); err != nil {
 		return nil, fmt.Errorf("refresh JWKS: %w", err)
 	}
 
@@ -255,7 +268,9 @@ func findKey(keys []jsonWebKey, kid string) *jsonWebKey {
 	return &keys[i]
 }
 
-func (v *OIDCValidator) refreshJWKS(ctx context.Context) error {
+// refreshJWKS refetches the key set. afterMiss records that an unknown key ID
+// caused it, which starts the jwksMissInterval wait.
+func (v *OIDCValidator) refreshJWKS(ctx context.Context, afterMiss bool) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.discovery.JwksURI, nil)
 	if err != nil {
 		return err
@@ -281,6 +296,9 @@ func (v *OIDCValidator) refreshJWKS(ctx context.Context) error {
 	v.jwksMu.Lock()
 	v.jwks = set.Keys
 	v.jwksTime = time.Now()
+	if afterMiss {
+		v.jwksMissTime = v.jwksTime
+	}
 	v.jwksMu.Unlock()
 	return nil
 }

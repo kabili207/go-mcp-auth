@@ -98,12 +98,4 @@ func TestStore(t *testing.T) {
 	if _, err := store.GetPendingAuth(ctx, id+"_b"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("deleted pending auth: %v, want sql.ErrNoRows", err)
 	}
-
-	a, err := store.Secret(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := store.Secret(ctx); len(a) < 32 || string(a) != string(b) {
-		t.Errorf("secrets differ or are short")
-	}
 }

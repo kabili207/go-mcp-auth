@@ -51,8 +51,3 @@ CREATE TABLE IF NOT EXISTS mcp_oauth_pending_auth (
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS mcp_oauth_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);

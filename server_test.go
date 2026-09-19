@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -158,7 +159,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret, err := store.Secret(ctx)
+	secret, err := mcpauth.LoadSecret(ctx, &memSecrets{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,14 +545,68 @@ func TestMetadata(t *testing.T) {
 	}
 }
 
-func TestSecretIsStable(t *testing.T) {
-	f := newFixture(t)
-	a, err := f.store.Secret(context.Background())
-	if err != nil {
-		t.Fatal(err)
+// memSecrets is the smallest correct SecretStore: the check and the write happen
+// under one lock.
+type memSecrets struct {
+	mu    sync.Mutex
+	value string
+	calls int
+}
+
+func (m *memSecrets) LoadOrStoreSecret(ctx context.Context, candidate string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	if m.value == "" {
+		m.value = candidate
 	}
-	b, _ := f.store.Secret(context.Background())
-	if len(a) < 32 || string(a) != string(b) {
-		t.Errorf("secrets differ or are short: %d and %d bytes", len(a), len(b))
+	return m.value, nil
+}
+
+func TestLoadSecret(t *testing.T) {
+	ctx := context.Background()
+	store := &memSecrets{}
+
+	// Instances starting together must all sign with the same secret
+	results := make([]string, 8)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			secret, err := mcpauth.LoadSecret(ctx, store)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			results[i] = string(secret)
+		}()
+	}
+	wg.Wait()
+	for i, r := range results {
+		if len(r) < 32 || r != results[0] {
+			t.Fatalf("caller %d got a different or short secret (%d bytes)", i, len(r))
+		}
+	}
+
+	// NewServer accepts what LoadSecret returns, and a later start gets it back
+	again, err := mcpauth.LoadSecret(ctx, store)
+	if err != nil || string(again) != results[0] {
+		t.Errorf("second load: %v, same=%v", err, string(again) == results[0])
+	}
+
+	// A secret someone shortened by hand is refused, not used
+	if _, err := mcpauth.LoadSecret(ctx, &memSecrets{value: "too-short"}); err == nil {
+		t.Error("short stored secret accepted")
+	}
+	if _, err := mcpauth.LoadSecret(ctx, nil); err == nil {
+		t.Error("nil store accepted")
+	}
+
+	failing := mcpauth.SecretStoreFunc(func(context.Context, string) (string, error) {
+		return "", errors.New("database is down")
+	})
+	if _, err := mcpauth.LoadSecret(ctx, failing); err == nil {
+		t.Error("store error swallowed")
 	}
 }

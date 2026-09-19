@@ -4,10 +4,8 @@ package sqlitestore
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -28,25 +26,6 @@ func New(ctx context.Context, db *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("create mcpauth tables: %w", err)
 	}
 	return &Store{db: db}, nil
-}
-
-// Secret returns the JWT signing secret kept in the database, generating it on
-// first use. Concurrent first calls all end up with the same value.
-func (s *Store) Secret(ctx context.Context) ([]byte, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return nil, err
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO mcp_oauth_settings (key, value) VALUES ('jwt_secret', ?) ON CONFLICT (key) DO NOTHING`,
-		hex.EncodeToString(b)); err != nil {
-		return nil, err
-	}
-	var secret string
-	if err := s.db.QueryRowContext(ctx, `SELECT value FROM mcp_oauth_settings WHERE key = 'jwt_secret'`).Scan(&secret); err != nil {
-		return nil, err
-	}
-	return []byte(secret), nil
 }
 
 // Cleanup deletes what has expired. Nothing depends on it running; rows are

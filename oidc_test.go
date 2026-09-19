@@ -19,19 +19,31 @@ import (
 	mcpauth "github.com/kabili207/go-mcp-auth"
 )
 
-// keyServer is an identity provider that only serves discovery and a JWKS.
+// keyServer is an identity provider that serves discovery, a JWKS, and a userinfo
+// endpoint that vouches for any token at all. Real providers answer userinfo for
+// every client's tokens, so a validator that asks it about a JWT it just refused
+// would let that JWT in.
 type keyServer struct {
 	*httptest.Server
-	mu      sync.Mutex
-	keys    []map[string]string
-	fetches int
+	mu            sync.Mutex
+	keys          []map[string]string
+	fetches       int
+	userinfoCalls int
 }
 
 func newKeyServer(t *testing.T) *keyServer {
 	ks := &keyServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"issuer": ks.URL, "jwks_uri": ks.URL + "/jwks"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"issuer": ks.URL, "jwks_uri": ks.URL + "/jwks", "userinfo_endpoint": ks.URL + "/userinfo",
+		})
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		ks.mu.Lock()
+		ks.userinfoCalls++
+		ks.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]string{"sub": "sub-amy"})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
 		ks.mu.Lock()
@@ -121,6 +133,49 @@ func TestOIDCValidator(t *testing.T) {
 		if id != nil && (id.Subject != "sub-amy" || id.User != 7) {
 			t.Errorf("%s: identity = %+v", name, id)
 		}
+	}
+	if ks.userinfoCalls != 0 {
+		t.Errorf("userinfo asked about a JWT %d times", ks.userinfoCalls)
+	}
+
+	// An opaque token is the one thing userinfo is for
+	if id := v.ValidateToken(context.Background(), "opaque-access-token"); id == nil || id.User != 7 {
+		t.Errorf("opaque token: identity = %+v", id)
+	}
+	if ks.userinfoCalls != 1 {
+		t.Errorf("userinfo calls for an opaque token = %d, want 1", ks.userinfoCalls)
+	}
+}
+
+// Made-up key IDs must not each cost a request to the provider.
+func TestOIDCValidatorLimitsJWKSRefetch(t *testing.T) {
+	ks := newKeyServer(t)
+	key := ks.addRSA(t, "rsa-1")
+	stranger, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+	resolver := &users{allowed: map[string]int{"sub-amy": 7}}
+	v, err := mcpauth.NewOIDCValidator(context.Background(), mcpauth.OIDCConfig{IssuerURL: ks.URL}, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := jwt.MapClaims{"iss": ks.URL, "sub": "sub-amy", "exp": time.Now().Add(time.Hour).Unix()}
+
+	if v.ValidateToken(context.Background(), sign(t, jwt.SigningMethodRS256, key, "rsa-1", claims)) == nil {
+		t.Fatal("valid token rejected")
+	}
+	before := ks.fetches
+	for _, kid := range []string{"made-up-1", "made-up-2", "made-up-3", "made-up-4"} {
+		if v.ValidateToken(context.Background(), sign(t, jwt.SigningMethodRS256, stranger, kid, claims)) != nil {
+			t.Fatalf("token with unknown kid %q accepted", kid)
+		}
+	}
+	if got := ks.fetches - before; got > 1 {
+		t.Errorf("JWKS fetched %d times for four unknown key IDs, want at most 1", got)
+	}
+
+	// The known key still works while refetches are being held back
+	if v.ValidateToken(context.Background(), sign(t, jwt.SigningMethodRS256, key, "rsa-1", claims)) == nil {
+		t.Error("valid token rejected after unknown key IDs")
 	}
 }
 

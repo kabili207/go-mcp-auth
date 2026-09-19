@@ -3,17 +3,15 @@ package pgstore
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	_ "embed"
-	"encoding/hex"
 
 	mcpauth "github.com/kabili207/go-mcp-auth"
 	"github.com/lib/pq"
 )
 
 // Schema creates the tables, for the host to run from its own migrations. It is
-// idempotent. The settings table behind Secret is not in it; Secret creates that.
+// idempotent.
 //
 //go:embed schema.sql
 var Schema string
@@ -24,29 +22,6 @@ type Store struct {
 
 func New(db *sql.DB) *Store {
 	return &Store{db: db}
-}
-
-// Secret returns the JWT signing secret kept in the database, generating it on
-// first use. Concurrent first calls all end up with the same value.
-func (s *Store) Secret(ctx context.Context) ([]byte, error) {
-	if _, err := s.db.ExecContext(ctx,
-		`CREATE TABLE IF NOT EXISTS mcp_oauth_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
-		return nil, err
-	}
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return nil, err
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO mcp_oauth_settings (key, value) VALUES ('jwt_secret', $1) ON CONFLICT (key) DO NOTHING`,
-		hex.EncodeToString(b)); err != nil {
-		return nil, err
-	}
-	var secret string
-	if err := s.db.QueryRowContext(ctx, `SELECT value FROM mcp_oauth_settings WHERE key = 'jwt_secret'`).Scan(&secret); err != nil {
-		return nil, err
-	}
-	return []byte(secret), nil
 }
 
 // Cleanup deletes what has expired. Nothing depends on it running; rows are

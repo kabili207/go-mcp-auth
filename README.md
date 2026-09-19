@@ -8,7 +8,7 @@ Extracted from Misty and Dev Memory, which carried forked copies of the same cod
 
 ```go
 store, err := sqlitestore.New(ctx, db) // or pgstore.New(db)
-secret, err := store.Secret(ctx)
+secret, err := mcpauth.LoadSecret(ctx, settings) // see "The signing secret"
 
 auth, err := mcpauth.NewServer(ctx, mcpauth.Config{
     Issuer:   "https://mail.example.com",
@@ -31,6 +31,28 @@ mux.Handle("/mcp", mcpauth.Middleware(auth.ResourceMetadataURL(), auth)(mcpHandl
 Behind the middleware, `mcpauth.IdentityFrom(r.Context())` returns the caller. Its `User` field is whatever your resolver returned.
 
 Register `Issuer + "/oauth2/callback"` as a redirect URI on the client at your identity provider. The endpoint paths are fixed and sit at the root of `Issuer`. On a router other than `http.ServeMux`, register the `Handle*` methods yourself at the paths `Mount` uses.
+
+## The signing secret
+
+Access tokens are HS256 JWTs signed with `Config.JWTSecret`. It has to survive restarts, or every restart logs every client out. Where it lives is up to you: the library creates no storage for it.
+
+If it comes from your config file or the environment, pass the bytes and you're done. If you'd rather have it generated once and kept in your database, implement `SecretStore` over whatever you already use for settings, and `LoadSecret` does the generate-once part:
+
+```go
+settings := mcpauth.SecretStoreFunc(func(ctx context.Context, candidate string) (string, error) {
+    // Atomic: instances starting together must all end up with the same row.
+    if _, err := db.ExecContext(ctx,
+        `INSERT INTO settings (key, value) VALUES ('mcp_jwt_secret', $1) ON CONFLICT (key) DO NOTHING`,
+        candidate); err != nil {
+        return "", err
+    }
+    var secret string
+    err := db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'mcp_jwt_secret'`).Scan(&secret)
+    return secret, err
+})
+```
+
+Anyone who can read the secret can mint access tokens for any user your resolver accepts, so give it the same care as the rest of that table.
 
 ## The user resolver
 
@@ -56,7 +78,7 @@ It runs at login, where `Name` and `Email` are filled in and a new user can be c
 mcpauth.Middleware(auth.ResourceMetadataURL(), auth, oidcValidator, apiKeys)
 ```
 
-Put `Server` first. `OIDCValidator` falls back to the provider's userinfo endpoint for tokens it cannot verify, which would cost a network round trip on every request carrying a server-issued token.
+Put `Server` first, so its own tokens are checked locally before anything else looks at them. `OIDCValidator` verifies JWTs against the provider's JWKS and refuses any that fail. It only asks the provider's userinfo endpoint about tokens that are not JWTs, because userinfo cannot say which client a token was issued for.
 
 ## Stores
 

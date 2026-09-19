@@ -52,8 +52,8 @@ type Config struct {
 	Users UserResolver
 
 	// JWTSecret signs access tokens (HS256) and must be at least 32 bytes. It has
-	// to survive restarts, or every restart invalidates every access token. The
-	// stores in this module can keep one: see their Secret method.
+	// to survive restarts, or every restart invalidates every access token.
+	// LoadSecret generates one and keeps it in a SecretStore the host provides.
 	JWTSecret []byte
 
 	// AllowedRedirectHosts are the hosts a client may register an https redirect
