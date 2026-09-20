@@ -75,18 +75,18 @@ It runs at login, where `Name` and `Email` are filled in and a new user can be c
 `Middleware` takes any number of validators and tries them in order. `Server` accepts the tokens it issued, `OIDCValidator` accepts tokens issued directly by the identity provider, and you can add your own for API keys:
 
 ```go
-mcpauth.Middleware(auth.ResourceMetadataURL(), auth, oidcValidator, apiKeys)
+mcpauth.Middleware(auth.ResourceMetadataURL(), auth, apiKeys, oidcValidator)
 ```
 
 Put `Server` first, so its own tokens are checked locally before anything else looks at them. `OIDCValidator` verifies JWTs against the provider's JWKS and refuses any that fail. It only asks the provider's userinfo endpoint about tokens that are not JWTs, because userinfo cannot say which client a token was issued for.
+
+That makes `OIDCValidator` the one to put last. An API key is not a JWT, so a validator for them placed after it never sees a key until the key has already been sent to the identity provider as a bearer token.
 
 ## Stores
 
 `sqlitestore` uses `database/sql` only, so you pick the driver. It creates its own tables. Keep them in a database you do not treat as disposable: registered clients and refresh tokens live there.
 
 `pgstore` uses the table layout Misty and Dev Memory already have, so moving either onto this library needs no data migration. `pgstore.Schema` is idempotent DDL to run from your own migrations.
-
-Both have a `Secret` method that generates the JWT signing secret once and keeps it in the database. A secret generated per process invalidates every access token on every restart.
 
 To write your own store, read the comment on `mcpauth.Store`. `MarkAuthCodeUsed` and `RevokeRefreshToken` must be compare-and-set and return `ErrAlreadyUsed` when they lose. An unconditional `UPDATE` lets two concurrent requests redeem one code, and lets a refresh token survive its own rotation.
 
