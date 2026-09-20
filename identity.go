@@ -77,6 +77,18 @@ type TokenValidator interface {
 // which is how an MCP client finds the authorization server. See
 // Server.ResourceMetadataURL.
 func Middleware(resourceMetadataURL string, validators ...TokenValidator) func(http.Handler) http.Handler {
+	return MiddlewareFunc(func(*http.Request) string { return resourceMetadataURL }, validators...)
+}
+
+// MiddlewareFunc is Middleware for a host with no configured public URL, which
+// has to work the metadata URL out from each request. That only fits a host
+// that is a resource server alone, in front of an external authorization
+// server. A host running Server has an Issuer and should use Middleware.
+//
+// A URL built from the Host header is only as trustworthy as the request. That
+// is acceptable here because it goes back to the same caller and nothing signed
+// depends on it.
+func MiddlewareFunc(resourceMetadataURL func(*http.Request) string, validators ...TokenValidator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// CORS preflight carries no credentials
@@ -87,7 +99,7 @@ func Middleware(resourceMetadataURL string, validators ...TokenValidator) func(h
 
 			token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if !ok || token == "" {
-				unauthorized(w, resourceMetadataURL, "Missing or invalid Authorization header")
+				unauthorized(w, resourceMetadataURL(r), "Missing or invalid Authorization header")
 				return
 			}
 
@@ -97,7 +109,7 @@ func Middleware(resourceMetadataURL string, validators ...TokenValidator) func(h
 					return
 				}
 			}
-			unauthorized(w, resourceMetadataURL, "Invalid or expired token")
+			unauthorized(w, resourceMetadataURL(r), "Invalid or expired token")
 		})
 	}
 }

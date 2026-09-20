@@ -326,6 +326,26 @@ func TestMiddlewareRejects(t *testing.T) {
 	}
 }
 
+func TestMiddlewareFuncBuildsURLPerRequest(t *testing.T) {
+	protected := mcpauth.MiddlewareFunc(func(r *http.Request) string {
+		return "https://" + r.Host + "/.well-known/oauth-protected-resource"
+	})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	for _, host := range []string{"one.example.com", "two.example.com"} {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		protected.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status %d, want 401", host, rec.Code)
+		}
+		want := `Bearer resource_metadata="https://` + host + `/.well-known/oauth-protected-resource"`
+		if got := rec.Header().Get("WWW-Authenticate"); got != want {
+			t.Errorf("%s: WWW-Authenticate = %q", host, got)
+		}
+	}
+}
+
 // A user the host stops accepting loses access before their token expires.
 func TestDeniedUser(t *testing.T) {
 	f := newFixture(t)

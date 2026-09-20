@@ -106,7 +106,7 @@ For anyone porting Misty or Dev Memory:
 - An unknown `token_endpoint_auth_method` is rejected at registration.
 - Token endpoint parameters are read from the body only, never the query string.
 - The identity provider's `error_description` is logged, not shown to the user.
-- `Issuer` and `Resource` come from config. Nothing is built from the `Host` or `X-Forwarded-Proto` headers.
+- `Issuer` and `Resource` come from config. `Server` builds nothing from the `Host` or `X-Forwarded-Proto` headers. A host with no public URL configured, acting only as a resource server in front of an external authorization server, can still build the 401 hint per request with `MiddlewareFunc`.
 
 ## Tests
 
