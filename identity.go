@@ -17,11 +17,15 @@ import (
 // authenticated correctly: unknown to the host, not yet approved, and so on.
 var ErrUserDenied = errors.New("mcpauth: user denied")
 
-// Claims is what the identity provider said about a user. Only Subject is
-// always set. Tokens issued by Server carry nothing else, so a resolver sees
-// Name and Email on the identity provider callback and not on later requests.
+// Claims is what the identity provider said about a user. Only Subject and
+// Issuer are always set. Tokens issued by Server and browser sessions carry
+// nothing else, so a resolver sees Name and Email at login and not on later
+// requests.
 type Claims struct {
-	Subject           string
+	Subject string
+	// Issuer is the identity provider's issuer, from its discovery document.
+	// Subject is only unique within it.
+	Issuer            string
 	Name              string
 	Email             string
 	PreferredUsername string

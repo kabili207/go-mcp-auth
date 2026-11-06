@@ -145,6 +145,7 @@ type fixture struct {
 	barrier *barrierStore
 	users   *users
 	server  *mcpauth.Server
+	secret  []byte
 	mux     *http.ServeMux
 }
 
@@ -166,7 +167,7 @@ func newFixture(t *testing.T) *fixture {
 
 	f := &fixture{
 		t: t, idp: newFakeIDP(t), store: store, barrier: &barrierStore{Store: store},
-		users: &users{allowed: map[string]int{"sub-amy": 7}},
+		users: &users{allowed: map[string]int{"sub-amy": 7}}, secret: secret,
 	}
 	f.server, err = mcpauth.NewServer(ctx, mcpauth.Config{
 		Issuer:    issuer,

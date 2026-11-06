@@ -172,6 +172,7 @@ func (v *OIDCValidator) validateJWT(ctx context.Context, tokenString string) *Id
 	}
 	return v.identity(ctx, clientID, Claims{
 		Subject:           claims.Subject,
+		Issuer:            claims.Issuer,
 		Name:              claims.Name,
 		Email:             claims.Email,
 		PreferredUsername: claims.PreferredUsername,
@@ -183,6 +184,7 @@ func (v *OIDCValidator) validateViaUserinfo(ctx context.Context, token string) *
 	if err != nil {
 		return nil
 	}
+	claims.Issuer = v.discovery.Issuer
 	return v.identity(ctx, "", *claims)
 }
 

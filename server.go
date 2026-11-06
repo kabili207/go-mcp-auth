@@ -396,7 +396,7 @@ func (s *Server) HandleIDPCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idpToken, err := s.exchangeIDPCode(ctx, idpCode, pending.IDPVerifier)
+	idpToken, err := exchangeIDPCode(ctx, s.httpClient, s.cfg.OIDC, s.discovery, idpCode, pending.IDPVerifier, s.issuer+callbackPath)
 	if err != nil {
 		slog.Error("MCP OAuth: identity provider token exchange failed", "error", err)
 		http.Error(w, "Failed to complete authentication", http.StatusInternalServerError)
@@ -408,6 +408,7 @@ func (s *Server) HandleIDPCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 		return
 	}
+	claims.Issuer = s.discovery.Issuer
 
 	if _, err := s.cfg.Users.ResolveUser(ctx, *claims); err != nil {
 		if errors.Is(err, ErrUserDenied) {
@@ -672,7 +673,7 @@ func (s *Server) ValidateToken(ctx context.Context, tokenString string) *Identit
 		return nil
 	}
 
-	user, err := s.cfg.Users.ResolveUser(ctx, Claims{Subject: claims.Subject})
+	user, err := s.cfg.Users.ResolveUser(ctx, Claims{Subject: claims.Subject, Issuer: s.discovery.Issuer})
 	if err != nil {
 		slog.Warn("MCP OAuth: access token refused by user resolver", "subject", claims.Subject, "error", err)
 		return nil
@@ -680,25 +681,26 @@ func (s *Server) ValidateToken(ctx context.Context, tokenString string) *Identit
 	return &Identity{Subject: claims.Subject, ClientID: claims.ClientID, Scope: claims.Scope, User: user}
 }
 
-// exchangeIDPCode returns the identity provider's access token.
-func (s *Server) exchangeIDPCode(ctx context.Context, code, verifier string) (string, error) {
+// exchangeIDPCode returns the identity provider's access token. redirectURI
+// must be the one the code was requested with.
+func exchangeIDPCode(ctx context.Context, client *http.Client, cfg OIDCConfig, d Discovery, code, verifier, redirectURI string) (string, error) {
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("redirect_uri", s.issuer+callbackPath)
-	data.Set("client_id", s.cfg.OIDC.ClientID)
-	if s.cfg.OIDC.ClientSecret != "" {
-		data.Set("client_secret", s.cfg.OIDC.ClientSecret)
+	data.Set("redirect_uri", redirectURI)
+	data.Set("client_id", cfg.ClientID)
+	if cfg.ClientSecret != "" {
+		data.Set("client_secret", cfg.ClientSecret)
 	}
 	data.Set("code_verifier", verifier)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.discovery.TokenEndpoint, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

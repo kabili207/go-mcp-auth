@@ -32,6 +32,31 @@ Behind the middleware, `mcpauth.IdentityFrom(r.Context())` returns the caller. I
 
 Register `Issuer + "/oauth2/callback"` as a redirect URI on the client at your identity provider. The endpoint paths are fixed and sit at the root of `Issuer`. On a router other than `http.ServeMux`, register the `Handle*` methods yourself at the paths `Mount` uses.
 
+## Browser login
+
+`BrowserLogin` is for the pages of a web UI. It sends the browser to the same identity provider, runs your resolver, and keeps the person logged in with a signed cookie. It needs no `Server` and no `Store`, so an app without an MCP endpoint can use it alone.
+
+```go
+login, err := mcpauth.NewBrowserLogin(ctx, mcpauth.BrowserConfig{
+    BaseURL: "https://mail.example.com",
+    OIDC:    oidcConfig,      // the same client as Server's is fine
+    Users:   mcpauth.UserResolverFunc(resolveUser),
+    Secret:  secret,          // can be the JWTSecret given to Server
+})
+
+login.Mount(mux)                              // GET /auth/login, GET /auth/callback, POST /auth/logout
+mux.Handle("/", login.Require(pages))         // must be logged in
+mux.Handle("/gallery/", login.Optional(pages)) // anyone, but IdentityFrom is set when logged in
+```
+
+Register `BaseURL + "/auth/callback"` as a redirect URI on the client at your identity provider. Alongside `Server`, that client has two: this one and `/oauth2/callback`.
+
+Behind `Require` and `Optional`, `IdentityFrom` works as it does behind `Middleware`. Without a session, `Require` redirects a browser asking for a page to `/auth/login?return=...` and gives anything else, htmx requests included, a 401. The return path must be on the same site, or the browser lands on `/` instead. Logout is a POST, so put it in a form.
+
+There is no session table. The cookie is an HS256 JWT holding the subject and an expiry (`MaxAge`, 30 days by default), and your resolver runs on every request, so someone you stop accepting is locked out at once. What it cannot do is revoke one cookie: logging out deletes it from that browser, and a copy taken before then works until it expires. Changing the secret logs everyone out.
+
+`Require`, `Optional` and the logout endpoint refuse cross-origin POST, PUT, PATCH and DELETE requests with Go's `http.CrossOriginProtection`. That is the CSRF protection for the handlers they wrap. A form posting to your app from another origin gets a 403.
+
 ## The signing secret
 
 Access tokens are HS256 JWTs signed with `Config.JWTSecret`. It has to survive restarts, or every restart logs every client out. Where it lives is up to you: the library creates no storage for it.
@@ -68,7 +93,7 @@ func resolveUser(ctx context.Context, c mcpauth.Claims) (any, error) {
 }
 ```
 
-It runs at login, where `Name` and `Email` are filled in and a new user can be created, and again on every request, where only `Subject` is set. Returning `ErrUserDenied` refuses the user with a 403 at login. Any error on a later request rejects the token, so a user you stop accepting loses access without waiting for their token to expire. Approval workflows, auto-provisioning and user ID types all stay on your side of this function.
+It runs at login, where `Name` and `Email` are filled in and a new user can be created, and again on every request, where only `Subject` and `Issuer` are set. `Issuer` is the identity provider's, from discovery; key users on both if you might ever change providers. Returning `ErrUserDenied` refuses the user with a 403 at login. Any error on a later request rejects the token or session, so a user you stop accepting loses access without waiting for their token to expire. Approval workflows, auto-provisioning and user ID types all stay on your side of this function.
 
 ## More than one kind of token
 
