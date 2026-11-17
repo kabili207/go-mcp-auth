@@ -29,6 +29,11 @@ type Claims struct {
 	Name              string
 	Email             string
 	PreferredUsername string
+	// Groups comes from the provider's "groups" claim, so only when
+	// OIDCConfig.ExtraScopes asks for it. Kanidm lists each group's UUID and
+	// its SPN. Like Name and Email, Server tokens and browser sessions only
+	// carry it at login.
+	Groups []string
 }
 
 // UserResolver maps an authenticated subject to the host's own user. The value

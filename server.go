@@ -359,7 +359,7 @@ func (s *Server) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	params.Set("response_type", "code")
 	params.Set("client_id", s.cfg.OIDC.ClientID)
 	params.Set("redirect_uri", s.issuer+callbackPath)
-	params.Set("scope", "openid profile email")
+	params.Set("scope", s.cfg.OIDC.scope())
 	params.Set("state", idpState)
 	params.Set("code_challenge", s256Challenge(idpVerifier))
 	params.Set("code_challenge_method", "S256")
