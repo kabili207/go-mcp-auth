@@ -177,7 +177,7 @@ func (b *BrowserLogin) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	params.Set("response_type", "code")
 	params.Set("client_id", b.cfg.OIDC.ClientID)
 	params.Set("redirect_uri", b.baseURL+browserCallbackPath)
-	params.Set("scope", "openid profile email")
+	params.Set("scope", b.cfg.OIDC.scope())
 	params.Set("state", state)
 	params.Set("code_challenge", s256Challenge(verifier))
 	params.Set("code_challenge_method", "S256")

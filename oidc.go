@@ -38,6 +38,15 @@ type OIDCConfig struct {
 	// Kanidm serves discovery per client:
 	//   https://idm.example.com/oauth2/openid/CLIENT_ID/.well-known/openid-configuration
 	DiscoveryURL string
+
+	// ExtraScopes are asked for at login on top of "openid profile email", such
+	// as "groups" for Claims.Groups. The provider has to grant them: Kanidm
+	// only does through the client's scope map.
+	ExtraScopes []string
+}
+
+func (c OIDCConfig) scope() string {
+	return strings.Join(append([]string{"openid", "profile", "email"}, c.ExtraScopes...), " ")
 }
 
 // Discovery is the part of the provider's discovery document used here.
@@ -136,11 +145,12 @@ func (v *OIDCValidator) ValidateToken(ctx context.Context, token string) *Identi
 
 type oidcClaims struct {
 	jwt.RegisteredClaims
-	Email             string `json:"email,omitempty"`
-	Name              string `json:"name,omitempty"`
-	PreferredUsername string `json:"preferred_username,omitempty"`
-	ClientID          string `json:"client_id,omitempty"`
-	Azp               string `json:"azp,omitempty"`
+	Email             string   `json:"email,omitempty"`
+	Name              string   `json:"name,omitempty"`
+	PreferredUsername string   `json:"preferred_username,omitempty"`
+	Groups            []string `json:"groups,omitempty"`
+	ClientID          string   `json:"client_id,omitempty"`
+	Azp               string   `json:"azp,omitempty"`
 }
 
 func (v *OIDCValidator) validateJWT(ctx context.Context, tokenString string) *Identity {
@@ -176,6 +186,7 @@ func (v *OIDCValidator) validateJWT(ctx context.Context, tokenString string) *Id
 		Name:              claims.Name,
 		Email:             claims.Email,
 		PreferredUsername: claims.PreferredUsername,
+		Groups:            claims.Groups,
 	})
 }
 
@@ -219,10 +230,11 @@ func fetchUserinfo(ctx context.Context, client *http.Client, endpoint, accessTok
 	}
 
 	var info struct {
-		Sub               string `json:"sub"`
-		Name              string `json:"name"`
-		Email             string `json:"email"`
-		PreferredUsername string `json:"preferred_username"`
+		Sub               string   `json:"sub"`
+		Name              string   `json:"name"`
+		Email             string   `json:"email"`
+		PreferredUsername string   `json:"preferred_username"`
+		Groups            []string `json:"groups"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return nil, err
@@ -230,7 +242,7 @@ func fetchUserinfo(ctx context.Context, client *http.Client, endpoint, accessTok
 	if info.Sub == "" {
 		return nil, errors.New("userinfo has no subject")
 	}
-	return &Claims{Subject: info.Sub, Name: info.Name, Email: info.Email, PreferredUsername: info.PreferredUsername}, nil
+	return &Claims{Subject: info.Sub, Name: info.Name, Email: info.Email, PreferredUsername: info.PreferredUsername, Groups: info.Groups}, nil
 }
 
 func (v *OIDCValidator) signingKey(ctx context.Context, kid string) (any, error) {

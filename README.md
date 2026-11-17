@@ -107,6 +107,8 @@ func resolveUser(ctx context.Context, c mcpauth.Claims) (any, error) {
 
 It runs at login, where `Name` and `Email` are filled in and a new user can be created, and again on every request, where only `Subject` and `Issuer` are set. `Issuer` is the identity provider's, from discovery; key users on both if you might ever change providers. Returning `ErrUserDenied` refuses the user with a 403 at login. Any error on a later request rejects the token or session, so a user you stop accepting loses access without waiting for their token to expire. Approval workflows, auto-provisioning and user ID types all stay on your side of this function.
 
+To see group membership, set `OIDCConfig.ExtraScopes: []string{"groups"}`. `Claims.Groups` is then filled in at login from the provider's `groups` claim; Kanidm lists each group's UUID and its SPN. Kanidm only grants the scope through the client's scope map, so add `groups` there too. Like `Name` and `Email`, it is missing on later requests, so store what you need at login.
+
 ## More than one kind of token
 
 `Middleware` takes any number of validators and tries them in order. `Server` accepts the tokens it issued, `OIDCValidator` accepts tokens issued directly by the identity provider, and you can add your own for API keys:

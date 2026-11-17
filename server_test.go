@@ -60,7 +60,8 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"sub": idp.subject, "name": "Amy", "email": "amy@example.com"})
+		json.NewEncoder(w).Encode(map[string]any{"sub": idp.subject, "name": "Amy", "email": "amy@example.com",
+			"groups": []string{"5f1c2a8e-0000-4000-8000-000000000001", "household@idm.example.com"}})
 	})
 	idp.Server = httptest.NewServer(mux)
 	t.Cleanup(idp.Close)
@@ -71,11 +72,13 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 type users struct {
 	mu      sync.Mutex
 	allowed map[string]int
+	seen    []mcpauth.Claims
 }
 
 func (u *users) ResolveUser(ctx context.Context, c mcpauth.Claims) (any, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	u.seen = append(u.seen, c)
 	id, ok := u.allowed[c.Subject]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", mcpauth.ErrUserDenied, c.Subject)

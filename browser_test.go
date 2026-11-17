@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -105,6 +106,40 @@ func page(path string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, appURL+path, nil)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	return req
+}
+
+func TestBrowserLoginExtraScopes(t *testing.T) {
+	f := newBrowserFixture(t)
+	scopeAsked := func() string {
+		rec := f.do(httptest.NewRequest(http.MethodGet, appURL+"/auth/login", nil))
+		loc, _ := url.Parse(rec.Header().Get("Location"))
+		return loc.Query().Get("scope")
+	}
+	if got := scopeAsked(); got != "openid profile email" {
+		t.Errorf("default scope = %q", got)
+	}
+
+	var err error
+	f.login, err = mcpauth.NewBrowserLogin(context.Background(), mcpauth.BrowserConfig{
+		BaseURL: appURL,
+		OIDC:    mcpauth.OIDCConfig{IssuerURL: f.idp.URL, ClientID: "web", ExtraScopes: []string{"groups"}},
+		Users:   f.users,
+		Secret:  []byte(strings.Repeat("s", 32)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mux = http.NewServeMux()
+	f.login.Mount(f.mux)
+	if got := scopeAsked(); got != "openid profile email groups" {
+		t.Errorf("scope with groups = %q", got)
+	}
+
+	f.loggedIn()
+	login := f.users.seen[len(f.users.seen)-1]
+	if want := []string{"5f1c2a8e-0000-4000-8000-000000000001", "household@idm.example.com"}; !slices.Equal(login.Groups, want) {
+		t.Errorf("groups at login = %v, want %v", login.Groups, want)
+	}
 }
 
 func TestBrowserLoginRoundTrip(t *testing.T) {
