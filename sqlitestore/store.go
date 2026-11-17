@@ -28,6 +28,23 @@ func New(ctx context.Context, db *sql.DB) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// SettingsSecret is an mcpauth.SecretStore over a key/value table the host
+// already has, with TEXT columns named key (the primary key) and value. table
+// is put into the SQL as is, so it must be a constant, never input.
+func SettingsSecret(db *sql.DB, table, key string) mcpauth.SecretStore {
+	return mcpauth.SecretStoreFunc(func(ctx context.Context, candidate string) (string, error) {
+		// Whoever loses the conflict reads the winner's row, so instances
+		// starting together agree.
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO `+table+` (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING`, key, candidate); err != nil {
+			return "", err
+		}
+		var secret string
+		err := db.QueryRowContext(ctx, `SELECT value FROM `+table+` WHERE key = ?`, key).Scan(&secret)
+		return secret, err
+	})
+}
+
 // Cleanup deletes what has expired. Nothing depends on it running; rows are
 // checked for expiry when they are read.
 func (s *Store) Cleanup(ctx context.Context) error {

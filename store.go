@@ -3,12 +3,38 @@ package mcpauth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 )
 
 // ErrAlreadyUsed is what MarkAuthCodeUsed and RevokeRefreshToken return when
 // another request got there first.
 var ErrAlreadyUsed = errors.New("mcpauth: already used")
+
+// Cleaner is a store that can delete its expired rows. sqlitestore and pgstore
+// both are.
+type Cleaner interface {
+	Cleanup(ctx context.Context) error
+}
+
+// RunCleanup calls Cleanup now and then every interval until ctx is done, so
+// start it in its own goroutine. Nothing depends on it, since expiry is checked
+// on read. It stops the tables, which anonymous /register and /authorize calls
+// add to, from growing forever.
+func RunCleanup(ctx context.Context, store Cleaner, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if err := store.Cleanup(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("MCP OAuth: failed to clean up expired logins", "error", err)
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
 
 // Store holds the authorization server's state. UserID fields hold the identity
 // provider's subject, never a host user ID, so one schema serves every host.

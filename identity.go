@@ -121,6 +121,8 @@ func MiddlewareFunc(resourceMetadataURL func(*http.Request) string, validators .
 func unauthorized(w http.ResponseWriter, resourceMetadataURL, msg string) {
 	if resourceMetadataURL != "" {
 		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+resourceMetadataURL+`"`)
+	} else {
+		w.Header().Set("WWW-Authenticate", "Bearer")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
