@@ -26,7 +26,11 @@ auth, err := mcpauth.NewServer(ctx, mcpauth.Config{
 mux := http.NewServeMux()
 auth.Mount(mux)
 mux.Handle("/mcp", mcpauth.Middleware(auth.ResourceMetadataURL(), auth)(mcpHandler))
+
+go mcpauth.RunCleanup(ctx, store, 24*time.Hour)
 ```
+
+`RunCleanup` deletes expired codes, pending logins and refresh tokens until `ctx` ends. Expiry is checked on read, so nothing breaks without it, but anonymous `/register` and `/authorize` calls add rows that would otherwise never go away.
 
 Behind the middleware, `mcpauth.IdentityFrom(r.Context())` returns the caller. Its `User` field is whatever your resolver returned.
 
@@ -61,7 +65,15 @@ There is no session table. The cookie is an HS256 JWT holding the subject and an
 
 Access tokens are HS256 JWTs signed with `Config.JWTSecret`. It has to survive restarts, or every restart logs every client out. Where it lives is up to you: the library creates no storage for it.
 
-If it comes from your config file or the environment, pass the bytes and you're done. If you'd rather have it generated once and kept in your database, implement `SecretStore` over whatever you already use for settings, and `LoadSecret` does the generate-once part:
+If it comes from your config file or the environment, pass the bytes and you're done. If you'd rather have it generated once and kept in your database, `LoadSecret` does the generate-once part over a `SecretStore`.
+
+On SQLite with a key/value settings table (TEXT columns `key` and `value`, `key` the primary key), `sqlitestore.SettingsSecret` is that store. The table name goes into the SQL as is, so pass a constant:
+
+```go
+secret, err := mcpauth.LoadSecret(ctx, sqlitestore.SettingsSecret(db, "settings", "mcp_jwt_secret"))
+```
+
+Anywhere else, implement `SecretStore` over whatever you already use for settings:
 
 ```go
 settings := mcpauth.SecretStoreFunc(func(ctx context.Context, candidate string) (string, error) {
@@ -106,6 +118,17 @@ mcpauth.Middleware(auth.ResourceMetadataURL(), auth, apiKeys, oidcValidator)
 Put `Server` first, so its own tokens are checked locally before anything else looks at them. `OIDCValidator` verifies JWTs against the provider's JWKS and refuses any that fail. It only asks the provider's userinfo endpoint about tokens that are not JWTs, because userinfo cannot say which client a token was issued for.
 
 That makes `OIDCValidator` the one to put last. An API key is not a JWT, so a validator for them placed after it never sees a key until the key has already been sent to the identity provider as a bearer token.
+
+## Other systems calling yours
+
+`StaticTokens` accepts fixed bearer tokens you hand out to other systems, keyed by the caller's name. Give those endpoints a `Middleware` of their own:
+
+```go
+systems := mcpauth.StaticTokens(cfg.API.Tokens) // map[string]string, name to token
+mux.Handle("GET /api/lookup", mcpauth.Middleware("", systems)(lookup))
+```
+
+Behind it, `IdentityFrom` returns the caller's name as `ClientID`, with no `Subject` and no `User`. Keep it off your MCP endpoint, whose handlers expect a resolved user. With no metadata URL, a 401 carries a plain `WWW-Authenticate: Bearer`.
 
 ## Stores
 
